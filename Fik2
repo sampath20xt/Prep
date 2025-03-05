@@ -1,0 +1,203 @@
+Certainly! Below is the complete code for your voice assistant agent project, organized into individual files. You can copy and paste each section into its respective file in your project directory.
+
+1. main.py
+
+from call_agent import initiate_call
+
+if __name__ == "__main__":
+    initiate_call("+919014551652")  # Replace with the driver's phone number
+
+2. webhook.py
+
+from flask import Flask, request, Response
+from twilio.twiml.voice_response import VoiceResponse
+from stt import transcribe_audio
+from llm_controller import process_conversation
+
+app = Flask(__name__)
+
+@app.route("/incoming-call", methods=["POST"])
+def handle_incoming_call():
+    response = VoiceResponse()
+    response.say("Welcome to delivery support. Please say your order ID after the beep.")
+    response.record(max_length=10, play_beep=True, action="/process-recording")
+    return Response(str(response), mimetype="text/xml")
+
+@app.route("/process-recording", methods=["POST"])
+def process_recording():
+    recording_url = request.form['RecordingUrl']
+    order_id = transcribe_audio(recording_url)
+
+    response_text = process_conversation(order_id)
+
+    response = VoiceResponse()
+    response.say(response_text)
+    return Response(str(response), mimetype="text/xml")
+
+if __name__ == "__main__":
+    app.run(port=5000)
+
+3. llm_controller.py
+
+from groq_llm import ask_groq_llm
+from order_agent import fetch_order_details
+from delay_agent import record_delay
+from reschedule_agent import reschedule_order
+from notify_agent import send_notification
+
+def process_conversation(order_id):
+    prompt = f"Driver provided order ID: {order_id}. What should we do next?"
+    response = ask_groq_llm(prompt)
+
+    if "order details" in response.lower():
+        order_info = fetch_order_details(order_id)
+        response = ask_groq_llm(f"Order info: {order_info}. What now?")
+
+    if "delay" in response.lower():
+        reason = record_delay(order_id)
+        response = ask_groq_llm(f"Recorded delay reason: {reason}. Should we reschedule?")
+
+    if "reschedule" in response.lower():
+        new_time = reschedule_order(order_id, reason)
+        send_notification(order_id, new_time)
+        response = f"Order rescheduled to {new_time}. Notification sent."
+
+    return response
+
+4. stt.py
+
+import requests
+import whisper
+
+def transcribe_audio(recording_url):
+    audio_file = 'order_id.wav'
+    with open(audio_file, 'wb') as f:
+        f.write(requests.get(recording_url).content)
+
+    model = whisper.load_model("base")
+    result = model.transcribe(audio_file)
+    return result['text'].strip()
+
+5. tts.py
+
+from google.cloud import texttospeech
+
+def synthesize_speech(text):
+    client = texttospeech.TextToSpeechClient()
+
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+    voice = texttospeech.VoiceSelectionParams(language_code="en-US", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL)
+    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+
+    response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+
+    with open("response.mp3", "wb") as out:
+        out.write(response.audio_content)
+
+    return "response.mp3"
+
+6. db.py
+
+import psycopg2
+import os
+
+def get_db_connection():
+    return psycopg2.connect(
+        dbname=os.getenv('DB_NAME'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        host=os.getenv('DB_HOST'),
+        port=os.getenv('DB_PORT')
+    )
+
+def update_order_delay(order_id, reason):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE orders SET delay_reason = %s WHERE order_id = %s", (reason, order_id))
+
+def update_reschedule(order_id, time):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE orders SET reschedule_time = %s WHERE order_id = %s", (time, order_id))
+
+7. groq_llm.py
+
+import requests
+import os
+
+def ask_groq_llm(prompt):
+    response = requests.post(
+        "https://api.groq.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+            "Content-Type": "application/json"
+        },
+        json={"model": "mixtral-8x7b-32768", "messages": [{"role": "user", "content": prompt}]}
+    )
+    return response.json()['choices'][0]['message']['content'].strip()
+
+8. csv_search.py
+
+from crewai.tools import CSVSearchTool
+
+search_tool = CSVSearchTool("orders.csv", "order_id")
+
+def search_order(order_id):
+    return search_tool.search(order_id)
+
+9. n8n_notifier.py
+
+import requests
+
+def send_notification_to_n8n(payload):
+    requests.post("https://your-n8n-url/webhook/notify-order-update", json=payload)
+
+10. call_agent.py
+
+import os
+from twilio.rest import Client
+
+def initiate_call(driver_number):
+    client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+    call = client.calls.create(
+        url="https://your-ngrok-url/incoming-call",
+        to=driver_number,
+        from_="+19804738132"  # Your Twilio number
+    )
+    print(f"Call initiated: {call.sid}")
+
+11. order_agent.py
+
+from csv_search import search_order
+
+def fetch_order_details(order_id):
+    result = search_order(order_id)
+    return result[0] if result else {"status": "Not Found"}
+
+12. delay_agent.py
+
+from groq_llm import ask_groq_llm
+from db import update_order_delay
+
+def record_delay(order_id):
+    prompt = f"Ask the driver the reason for delay on order {order_id}."
+    reason = ask_groq_llm(prompt)
+
+    update_order_delay(order_id, reason)
+
+    return reason
+
+13. reschedule_agent.py
+
+from db import update_reschedule
+
+def reschedule_order(order_id, reason):
+    new_time = "2025-03-06T14:00:00Z"  # Placeholder until dynamic
+    update_reschedule(order_id, new_time)
+    return new_time
+
+14. notify_agent.py
+
+from n8n_notifier import send_notification_to_n8n
+
+def send 
