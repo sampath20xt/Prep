@@ -1,0 +1,209 @@
+Perfect! Here’s all the files for Option 1, organized into the voice_agent folder. You can simply create these files in PyCharm under a voice_agent folder, copy-paste the content, and you’re ready to go.
+
+1️⃣ Folder Structure (Create this in PyCharm)
+
+voice_agent/
+|-- main.py
+|-- call_agent.py
+|-- order_inquiry_agent.py
+|-- delay_agent.py
+|-- reschedule_agent.py
+|-- notify_agent.py
+|-- utils/
+|   |-- __init__.py
+|   |-- db.py
+|   |-- groq_llm.py
+|   |-- embedding.py
+|   |-- csv_search.py
+|   |-- n8n_notifier.py
+|-- orders.csv
+
+2️⃣ File Contents
+
+main.py
+
+from call_agent import handle_incoming_call
+from order_inquiry_agent import fetch_order_details
+from delay_agent import manage_delay
+from reschedule_agent import reschedule_appointment
+from notify_agent import send_notification
+
+def main():
+    call_details = handle_incoming_call()
+    order_id = call_details.get('order_id')
+
+    order_info = fetch_order_details(order_id)
+
+    if order_info.get('status') == 'Delayed':
+        reason = manage_delay(order_id, call_details.get('driver_id'))
+        new_schedule = reschedule_appointment(order_id, reason)
+        send_notification(order_id, new_schedule)
+
+if __name__ == "__main__":
+    main()
+
+call_agent.py
+
+def handle_incoming_call():
+    # Simulated call handling - Replace with actual Twilio webhook processing if needed.
+    call_data = {
+        'order_id': '12345',
+        'driver_id': 'D001'
+    }
+    return call_data
+
+order_inquiry_agent.py
+
+from utils.csv_search import search_order
+
+def fetch_order_details(order_id):
+    result = search_order(order_id)
+    if result:
+        return result[0]
+    return {'status': 'Not Found'}
+
+delay_agent.py
+
+from utils.groq_llm import ask_groq_llm
+from utils.db import update_order_delay
+
+def manage_delay(order_id, driver_id):
+    prompt = f"Driver {driver_id} reported delay for order {order_id}. Ask the driver for reason and summarize it."
+    delay_reason = ask_groq_llm(prompt)
+    update_order_delay(order_id, delay_reason)
+    return delay_reason
+
+reschedule_agent.py
+
+from utils.db import update_reschedule
+
+def reschedule_appointment(order_id, delay_reason):
+    new_time = "2025-03-06T14:00:00Z"  # Placeholder for now (add logic to fetch from shipper if needed)
+    update_reschedule(order_id, new_time)
+    return new_time
+
+notify_agent.py
+
+from utils.n8n_notifier import send_notification_to_n8n
+
+def send_notification(order_id, new_schedule):
+    payload = {
+        "order_id": order_id,
+        "new_schedule": new_schedule
+    }
+    send_notification_to_n8n(payload)
+
+utils/__init__.py
+
+# Empty file (just to make `utils` a package)
+
+utils/db.py
+
+import psycopg2
+
+def get_db_connection():
+    return psycopg2.connect(
+        dbname="your_db",
+        user="your_user",
+        password="your_password",
+        host="localhost",
+        port="5432"
+    )
+
+def update_order_delay(order_id, reason):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET delay_reason = %s WHERE order_id = %s", (reason, order_id))
+    conn.commit()
+    conn.close()
+
+def update_reschedule(order_id, new_time):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET reschedule_time = %s WHERE order_id = %s", (new_time, order_id))
+    conn.commit()
+    conn.close()
+
+utils/groq_llm.py
+
+import requests
+
+def ask_groq_llm(prompt):
+    url = "https://api.groq.com/v1/chat/completions"
+    headers = {
+        "Authorization": "Bearer YOUR_GROQ_API_KEY",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "mixtral-8x7b-32768",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    return response.json()['choices'][0]['message']['content'].strip()
+
+utils/embedding.py
+
+from sentence_transformers import SentenceTransformer
+
+embedder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+
+def get_embedding(text):
+    return embedder.encode(text).tolist()
+
+utils/csv_search.py
+
+from crewai.tools import CSVSearchTool
+
+search_tool = CSVSearchTool(file_path="orders.csv", search_column="order_id")
+
+def search_order(order_id):
+    return search_tool.search(order_id)
+
+utils/n8n_notifier.py
+
+import requests
+
+def send_notification_to_n8n(payload):
+    url = "https://your-n8n-instance/webhook/notify-order-update"
+    response = requests.post(url, json=payload)
+    if response.status_code != 200:
+        raise Exception(f"n8n Notification Failed: {response.text}")
+
+orders.csv
+
+Create a file called orders.csv and add this sample data:
+
+order_id,status,driver_id,shipper_id,delay_reason,reschedule_time
+12345,Delayed,D001,S001,Traffic,NULL
+67890,On Time,D002,S002,NULL,NULL
+
+How to Run in PyCharm
+	1.	Create a folder called voice_agent.
+	2.	Inside voice_agent, create the files above.
+	3.	Add the orders.csv inside voice_agent.
+	4.	Right-click voice_agent and mark it as Sources Root (helps with imports).
+	5.	Run main.py.
+
+Quick Setup Checklist
+
+Component	Install
+Postgres Driver	pip install psycopg2
+Groq API Call	pip install requests
+Sentence Transformers	pip install sentence-transformers
+CrewAI CSV Search	pip install crewai (installing CrewAI handles this)
+Orders Data	Add orders.csv manually
+Database	Create orders table in Postgres
+
+Bonus - Postgres Table Creation (Run this once)
+
+CREATE TABLE orders (
+    order_id VARCHAR PRIMARY KEY,
+    status VARCHAR,
+    driver_id VARCHAR,
+    shipper_id VARCHAR,
+    delay_reason VARCHAR,
+    reschedule_time TIMESTAMP
+);
+
+Let me know if you want me to package this whole thing into a ready-to-download zip file — I can generate that for you right now if needed. Want me to do that?
